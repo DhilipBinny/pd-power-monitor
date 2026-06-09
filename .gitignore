@@ -1,0 +1,4 @@
+power-monitor
+power-monitor-*
+*.py
+release.sh
