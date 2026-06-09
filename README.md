@@ -41,9 +41,22 @@ Quit
 
 ## Installation
 
-### Prerequisites
+### Quick install (recommended)
 
 ```bash
+curl -sL https://raw.githubusercontent.com/DhilipBinny/pd-power-monitor/main/install.sh | sh
+```
+
+This automatically:
+- Installs runtime dependencies (GTK3, libayatana-appindicator3)
+- Downloads the latest release binary for your architecture
+- Installs to `/usr/local/bin/`
+- Sets up autostart on login
+
+### Build from source
+
+```bash
+# Install build dependencies
 # Ubuntu/Debian
 sudo apt install -y golang libayatana-appindicator3-dev libgtk-3-dev pkg-config
 
@@ -52,33 +65,12 @@ sudo dnf install -y golang libayatana-appindicator-gtk3-devel gtk3-devel pkg-con
 
 # Arch
 sudo pacman -S go libayatana-appindicator gtk3 pkgconf
-```
 
-### Build and install
-
-```bash
-git clone https://github.com/YOUR_USERNAME/power-monitor.git
-cd power-monitor
+# Build and install
+git clone https://github.com/DhilipBinny/pd-power-monitor.git
+cd pd-power-monitor
 go build -o power-monitor .
-sudo cp power-monitor /usr/local/bin/
-```
-
-### Enable autostart (optional)
-
-```bash
-mkdir -p ~/.config/autostart
-cat > ~/.config/autostart/power-monitor.desktop << 'EOF'
-[Desktop Entry]
-Type=Application
-Exec=/usr/local/bin/power-monitor start
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=5
-Name=Power Monitor
-Comment=Shows power delivery sources in the top bar
-Icon=thunderbolt-symbolic
-EOF
+sudo install -m 755 power-monitor /usr/local/bin/
 ```
 
 ## Usage

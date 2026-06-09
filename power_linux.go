@@ -114,9 +114,12 @@ func readOneBattery(bat string) BatteryInfo {
 	} else {
 		i := sysfsInt(filepath.Join(bat, "current_now"))
 		v := sysfsInt(filepath.Join(bat, "voltage_now"))
-		if i > 0 && v > 0 {
+		if i > 0 && v > 0 { // sysfsInt returns -1 on parse error, 0 on missing
 			powerW = (float64(v) / 1e6) * (float64(i) / 1e6)
 		}
+	}
+	if powerW < 0 {
+		powerW = 0
 	}
 
 	return BatteryInfo{

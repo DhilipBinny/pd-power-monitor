@@ -10,10 +10,7 @@ type DisplayState struct {
 	ThreshLabel string
 }
 
-func ComputeDisplay(source PowerSource) DisplayState {
-	ports := source.USBCPorts()
-	bat := source.Battery()
-	ac := source.ACOnline()
+func ComputeDisplay(ports []USBCPort, bat BatteryInfo, ac bool) DisplayState {
 
 	var labelParts []string
 	var totalInput float64
@@ -49,9 +46,13 @@ func ComputeDisplay(source PowerSource) DisplayState {
 		batLabel = fmt.Sprintf("Battery: %d%% | %s | %.1fW", bat.Capacity, bat.Status, bat.PowerW)
 	}
 
-	totalLabel := fmt.Sprintf("Power input: %.0fW", totalInput)
-	if ac && totalInput == 0 {
+	var totalLabel string
+	if totalInput > 0 {
+		totalLabel = fmt.Sprintf("Power input: %.0fW", totalInput)
+	} else if ac {
 		totalLabel = "Power input: AC adapter"
+	} else {
+		totalLabel = "Power input: none"
 	}
 
 	var threshLabel string

@@ -159,14 +159,16 @@ func (t *LinuxTray) rebuildPortItems() {
 }
 
 func (t *LinuxTray) update() {
-	// Check if port count changed
 	ports := t.source.USBCPorts()
+	bat := t.source.Battery()
+	ac := t.source.ACOnline()
+
 	if len(ports) != len(t.portItems) {
 		t.rebuildPortItems()
 		C.show_all(t.menu)
 	}
 
-	state := ComputeDisplay(t.source)
+	state := ComputeDisplay(ports, bat, ac)
 
 	for i, label := range state.PortLabels {
 		if i < len(t.portItems) {

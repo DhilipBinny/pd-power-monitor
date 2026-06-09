@@ -107,7 +107,20 @@ func cmdStart() {
 		fmt.Printf("failed to start: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("power-monitor started (pid %d)\n", cmd.Process.Pid)
+	childPid := cmd.Process.Pid
+	// Wait briefly to verify child didn't crash immediately
+	time.Sleep(500 * time.Millisecond)
+	proc, _ := os.FindProcess(childPid)
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		fmt.Printf("power-monitor failed to start (pid %d exited immediately)\n", childPid)
+		logPath := os.Getenv("XDG_RUNTIME_DIR")
+		if logPath == "" {
+			logPath = "/tmp"
+		}
+		fmt.Printf("check log: %s/power-monitor.log\n", logPath)
+		os.Exit(1)
+	}
+	fmt.Printf("power-monitor started (pid %d)\n", childPid)
 }
 
 func cmdRestart() {
