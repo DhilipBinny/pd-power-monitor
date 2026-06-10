@@ -57,6 +57,11 @@ static guint add_timeout(guint interval) {
 	extern gboolean goOnUpdate();
 	return g_timeout_add(interval, (GSourceFunc)goOnUpdate, NULL);
 }
+
+static guint add_one_shot(guint interval) {
+	extern gboolean goOnFirstUpdate();
+	return g_timeout_add(interval, (GSourceFunc)goOnFirstUpdate, NULL);
+}
 */
 import "C"
 import "unsafe"
@@ -188,8 +193,8 @@ func (t *LinuxTray) update() {
 }
 
 func (t *LinuxTray) Run() {
+	C.add_one_shot(500)
 	C.add_timeout(refreshInterval)
-	t.update()
 	C.gtk_main()
 }
 
@@ -202,6 +207,14 @@ func goOnQuit() {
 	if trayInstance != nil {
 		trayInstance.Quit()
 	}
+}
+
+//export goOnFirstUpdate
+func goOnFirstUpdate() C.gboolean {
+	if trayInstance != nil {
+		trayInstance.update()
+	}
+	return C.FALSE
 }
 
 //export goOnUpdate
