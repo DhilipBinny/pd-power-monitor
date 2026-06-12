@@ -10,19 +10,75 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 )
 
+// repoSlug is the single source of the repo identity for self-upgrade;
+// install.sh's REPO variable must stay in sync with it.
+const repoSlug = "DhilipBinny/pd-power-monitor"
+
 const (
-	releaseLatestAPI = "https://api.github.com/repos/DhilipBinny/pd-power-monitor/releases/latest"
-	releaseBaseURL   = "https://github.com/DhilipBinny/pd-power-monitor/releases/download"
+	releaseLatestAPI = "https://api.github.com/repos/" + repoSlug + "/releases/latest"
+	releaseBaseURL   = "https://github.com/" + repoSlug + "/releases/download"
 	httpTimeout      = 60 * time.Second
-	httpMaxBody      = 50 << 20 // bounds the download; binaries are ~2 MB
+	httpMaxBody      = 50 << 20 // bounds the download; binaries are ~6 MB
 )
 
 // Set at release build time via -ldflags "-X main.version=vX.Y.Z"
 var version = "dev"
+
+// versionString falls back to Go module/VCS build info so source builds
+// report something meaningful instead of "dev".
+func versionString() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+				return "dev-" + s.Value[:7]
+			}
+		}
+	}
+	return version
+}
+
+// semverParts parses "vMAJ.MIN.PATCH"; ok is false for anything else.
+func semverParts(v string) (parts [3]int, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	fields := strings.SplitN(v, ".", 3)
+	if len(fields) != 3 {
+		return parts, false
+	}
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			return parts, false
+		}
+		parts[i] = n
+	}
+	return parts, true
+}
+
+func semverLess(a, b string) bool {
+	pa, oka := semverParts(a)
+	pb, okb := semverParts(b)
+	if !oka || !okb {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if pa[i] != pb[i] {
+			return pa[i] < pb[i]
+		}
+	}
+	return false
+}
 
 func cmdUpgrade(args []string) {
 	checkOnly := false
@@ -53,19 +109,32 @@ func cmdUpgrade(args []string) {
 		target = latest
 	}
 
-	fmt.Printf("Current version: %s\n", version)
+	current := versionString()
+	fmt.Printf("Current version: %s\n", current)
 	fmt.Printf("Target version:  %s\n", target)
 
-	if version == target {
+	if current == target {
 		fmt.Println("Already up to date.")
 		return
 	}
+	if semverLess(target, current) {
+		fmt.Printf("warning: %s is older than the current version — this is a downgrade\n", target)
+	}
 
 	if checkOnly {
-		fmt.Printf("\nUpgrade available: %s -> %s\n", version, target)
+		fmt.Printf("\nUpgrade available: %s -> %s\n", current, target)
 		fmt.Println("Run 'power-monitor upgrade' to install (sudo if installed in a system path).")
 		return
 	}
+
+	// Be explicit about which copy gets replaced: this is os.Executable(),
+	// not necessarily the installed /usr/local/bin binary.
+	exePath, err := currentExecutable()
+	if err != nil {
+		fmt.Printf("cannot resolve current binary path: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("This will replace: %s\n", exePath)
 
 	asset := fmt.Sprintf("power-monitor-%s-%s", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf("\nDownloading %s %s...\n", asset, target)
@@ -86,6 +155,10 @@ func cmdUpgrade(args []string) {
 		fmt.Printf("download failed: %v\n", err)
 		os.Exit(1)
 	}
+	if int64(len(binData)) >= httpMaxBody {
+		fmt.Println("release asset exceeds the size limit — aborting")
+		os.Exit(1)
+	}
 	sum := sha256.Sum256(binData)
 	if hex.EncodeToString(sum[:]) != expected {
 		fmt.Println("checksum mismatch — aborting, binary not replaced")
@@ -93,7 +166,7 @@ func cmdUpgrade(args []string) {
 	}
 	fmt.Printf("Verified %d bytes (sha256 OK)\n", len(binData))
 
-	if err := replaceRunningBinary(binData); err != nil {
+	if err := replaceBinary(exePath, binData); err != nil {
 		fmt.Printf("install failed: %v\n", err)
 		if os.IsPermission(err) || strings.Contains(err.Error(), "permission denied") {
 			fmt.Println("the binary lives in a system path — retry with: sudo power-monitor upgrade")
@@ -101,10 +174,21 @@ func cmdUpgrade(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\nUpgraded %s -> %s\n", version, target)
-	if readPID() != 0 {
-		fmt.Println("Run 'power-monitor restart' to restart the indicator on the new version.")
+	fmt.Printf("\nUpgraded %s -> %s\n", current, target)
+	// readPID can't see the user's indicator when running under sudo, so
+	// the hint is unconditional
+	fmt.Println("If the indicator is running, restart it with: power-monitor restart")
+}
+
+func currentExecutable() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", err
 	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+	return exePath, nil
 }
 
 func fetchLatestTag() (string, error) {
@@ -136,19 +220,10 @@ func findChecksum(sums, asset string) string {
 	return ""
 }
 
-// replaceRunningBinary writes binData next to the current executable and
-// atomically renames it into place. POSIX rename-over-open-file keeps any
-// running process on its old inode, so an active indicator keeps working
-// until restarted.
-func replaceRunningBinary(binData []byte) error {
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve current binary path: %w", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
-		exePath = resolved
-	}
-
+// replaceBinary writes binData next to exePath and atomically renames it
+// into place. POSIX rename-over-open-file keeps any running process on its
+// old inode, so an active indicator keeps working until restarted.
+func replaceBinary(exePath string, binData []byte) error {
 	dir := filepath.Dir(exePath)
 	tmp, err := os.CreateTemp(dir, "power-monitor-upgrade-*")
 	if err != nil {

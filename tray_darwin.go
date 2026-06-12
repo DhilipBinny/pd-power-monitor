@@ -11,7 +11,6 @@ package main
 import "C"
 import (
 	"runtime"
-	"unsafe"
 )
 
 // AppKit requires the run loop on the process main thread; lock the main
@@ -20,25 +19,21 @@ func init() {
 	runtime.LockOSThread()
 }
 
-const refreshSeconds = 3.0
-
 var trayInstance *DarwinTray
 
 type DarwinTray struct {
 	source    PowerSource
 	portCount int
+
+	// last rendered state, to skip cgo/AppKit work when nothing changed
+	lastState DisplayState
+	rendered  bool
 }
 
 func NewTray() TrayUI {
 	t := &DarwinTray{}
 	trayInstance = t
 	return t
-}
-
-func withCStr(s string, fn func(*C.char)) {
-	cs := C.CString(s)
-	fn(cs)
-	C.free(unsafe.Pointer(cs))
 }
 
 func (t *DarwinTray) Init(source PowerSource) {
@@ -54,24 +49,40 @@ func (t *DarwinTray) update() {
 	if len(ports) != t.portCount {
 		t.portCount = len(ports)
 		C.tray_set_port_count(C.int(t.portCount))
+		t.rendered = false
 	}
 
 	state := ComputeDisplay(ports, bat, ac)
+	prev, force := t.lastState, !t.rendered
 
 	for i, label := range state.PortLabels {
-		withCStr(label, func(cs *C.char) {
-			C.tray_set_port_label(C.int(i), cs)
-		})
+		if force || i >= len(prev.PortLabels) || prev.PortLabels[i] != label {
+			withCStr(label, func(cs *C.char) {
+				C.tray_set_port_label(C.int(i), cs)
+			})
+		}
 	}
 
-	withCStr(state.BatLabel, func(cs *C.char) { C.tray_set_bat(cs) })
-	withCStr(state.TotalLabel, func(cs *C.char) { C.tray_set_total(cs) })
-	withCStr(state.BarLabel, func(cs *C.char) { C.tray_set_title(cs) })
+	if force || prev.BatLabel != state.BatLabel {
+		withCStr(state.BatLabel, func(cs *C.char) { C.tray_set_bat(cs) })
+	}
+	if force || prev.TotalLabel != state.TotalLabel {
+		withCStr(state.TotalLabel, func(cs *C.char) { C.tray_set_total(cs) })
+	}
+	// Re-setting the status item title triggers AppKit layout; skip when
+	// unchanged. ThreshLabel is intentionally unused: macOS manages charge
+	// limits itself, so the menu has no charge-range row.
+	if force || prev.BarLabel != state.BarLabel {
+		withCStr(state.BarLabel, func(cs *C.char) { C.tray_set_title(cs) })
+	}
+
+	t.lastState = state
+	t.rendered = true
 }
 
 func (t *DarwinTray) Run() {
 	t.update()
-	C.tray_run(C.double(refreshSeconds))
+	C.tray_run(C.double(refreshPeriod.Seconds()))
 }
 
 func (t *DarwinTray) Quit() {

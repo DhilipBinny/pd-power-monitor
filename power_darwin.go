@@ -127,7 +127,7 @@ func NewPowerSource() PowerSource {
 }
 
 func (d *DarwinPowerSource) snapshot() (C.power_info, bool) {
-	if !d.readAt.IsZero() && time.Since(d.readAt) < time.Second {
+	if !d.readAt.IsZero() && time.Since(d.readAt) < snapshotTTL {
 		return d.info, d.infoOK
 	}
 	d.infoOK = C.read_power(&d.info) == 0

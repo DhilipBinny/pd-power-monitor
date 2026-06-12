@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type DisplayState struct {
 	BarLabel    string
@@ -38,7 +41,11 @@ func ComputeDisplay(ports []USBCPort, bat BatteryInfo, ac bool) DisplayState {
 	if !bat.Found {
 		batLabel = "Battery: not present"
 	} else {
-		if bat.Status == statusDischarging {
+		// Some drivers report "Unknown" while actually draining; show the
+		// draw rather than pretending there's no power flow
+		draining := bat.Status == statusDischarging ||
+			(bat.Status == statusUnknown && !ac && bat.PowerW > 0)
+		if draining {
 			labelParts = append(labelParts, fmt.Sprintf("BAT:%.1fW", bat.PowerW))
 		} else if bat.Status == statusCharging {
 			labelParts = append(labelParts, fmt.Sprintf("CHG:%.1fW", bat.PowerW))
@@ -62,13 +69,7 @@ func ComputeDisplay(ports []USBCPort, bat BatteryInfo, ac bool) DisplayState {
 
 	barLabel := "No power"
 	if len(labelParts) > 0 {
-		barLabel = ""
-		for i, p := range labelParts {
-			if i > 0 {
-				barLabel += "  |  "
-			}
-			barLabel += p
-		}
+		barLabel = strings.Join(labelParts, "  |  ")
 	}
 
 	return DisplayState{

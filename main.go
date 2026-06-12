@@ -6,15 +6,13 @@ import (
 )
 
 func runIndicator() {
-	// Guard against a second instance (e.g. launchd RunAtLoad alongside a
-	// manually started one); cmdStart checks too, but --run can be invoked
-	// directly.
-	if pid := readPID(); pid != 0 && pid != os.Getpid() {
-		fmt.Printf("power-monitor is already running (pid %d)\n", pid)
+	// Atomically claim the PID file; closes the race between launchd
+	// RunAtLoad and a manual start at login.
+	if err := acquirePID(); err != nil {
+		fmt.Printf("power-monitor: %v\n", err)
 		os.Exit(1)
 	}
-	writePID()
-	defer removePID()
+	defer removeOwnPID()
 
 	source := NewPowerSource()
 	tray := NewTray()
@@ -23,6 +21,27 @@ func runIndicator() {
 	installSignalHandler(tray.Quit)
 
 	tray.Run()
+}
+
+func cmdAutostart(args []string) {
+	mode := ""
+	if len(args) > 0 {
+		mode = args[0]
+	}
+	var err error
+	switch mode {
+	case "on", "enable":
+		err = autostartEnable()
+	case "off", "disable":
+		err = autostartDisable()
+	default:
+		fmt.Println("usage: power-monitor autostart on|off")
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Printf("autostart %s failed: %v\n", mode, err)
+		os.Exit(1)
+	}
 }
 
 func main() {
@@ -40,10 +59,12 @@ func main() {
 		cmdRestart()
 	case "status":
 		cmdStatus()
+	case "autostart":
+		cmdAutostart(os.Args[2:])
 	case "upgrade":
 		cmdUpgrade(os.Args[2:])
 	case "version", "--version":
-		fmt.Println("power-monitor", version)
+		fmt.Println("power-monitor", versionString())
 	case "--run":
 		runIndicator()
 	case "-h", "--help", "help":

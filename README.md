@@ -84,9 +84,11 @@ go build -o power-monitor .
 sudo install -m 755 power-monitor /usr/local/bin/
 ```
 
-For autostart on login, `install.sh` sets up a launchd LaunchAgent at
-`~/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist` that runs
-`power-monitor --run` with `RunAtLoad`.
+For autostart on login, run `power-monitor autostart on` — it writes (and
+loads) a launchd LaunchAgent at
+`~/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist`. With the
+LaunchAgent installed, `start`/`stop`/`restart` go through launchd so the
+process stays under its supervision.
 
 ## Usage
 
@@ -95,6 +97,8 @@ power-monitor start       # Start the indicator (runs in background)
 power-monitor stop        # Stop the indicator
 power-monitor restart     # Restart the indicator
 power-monitor status      # Show power info (works without the tray running)
+power-monitor autostart on   # Enable start-on-login (XDG autostart / launchd)
+power-monitor autostart off  # Disable start-on-login
 power-monitor upgrade     # Self-update to the latest release (sudo if in /usr/local/bin)
 power-monitor version     # Show the installed version
 power-monitor help        # Show usage
@@ -206,20 +210,11 @@ All shared logic lives in `types.go`, `logic.go`, and `process.go`; each platfor
 
 ## Uninstall
 
-Linux:
+Both platforms:
 
 ```bash
 power-monitor stop
-sudo rm /usr/local/bin/power-monitor
-rm ~/.config/autostart/power-monitor.desktop
-```
-
-macOS:
-
-```bash
-power-monitor stop
-launchctl unload ~/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist
-rm ~/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist
+power-monitor autostart off
 sudo rm /usr/local/bin/power-monitor
 ```
 

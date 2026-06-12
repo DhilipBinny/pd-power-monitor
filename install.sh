@@ -1,6 +1,7 @@
 #!/bin/sh
 set -e
 
+# Must stay in sync with repoSlug in upgrade.go
 REPO="DhilipBinny/pd-power-monitor"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="power-monitor"
@@ -36,22 +37,9 @@ main() {
         fi
     fi
 
-    # Get latest release tag
-    if command -v curl >/dev/null 2>&1; then
-        LATEST=$(curl -sI "https://github.com/$REPO/releases/latest" | grep -i "^location:" | sed 's|.*/||' | tr -d '\r')
-    elif command -v wget >/dev/null 2>&1; then
-        LATEST=$(wget -qS --max-redirect=0 "https://github.com/$REPO/releases/latest" 2>&1 | grep -i "Location:" | sed 's|.*/||' | tr -d '\r')
-    else
-        echo "Error: curl or wget required"; exit 1
-    fi
-
-    if [ -z "$LATEST" ]; then
-        echo "Error: could not determine latest release"
-        exit 1
-    fi
-
-    DOWNLOAD_URL="https://github.com/$REPO/releases/download/$LATEST/$BINARY_NAME-$OS-$ARCH"
-    echo "Downloading $BINARY_NAME $LATEST ($OS/$ARCH)..."
+    # GitHub's stable alias resolves the latest release in one request
+    DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$BINARY_NAME-$OS-$ARCH"
+    echo "Downloading $BINARY_NAME latest ($OS/$ARCH)..."
 
     TMPFILE=$(mktemp)
     # -f makes curl fail on HTTP errors instead of saving the 404 body
@@ -77,44 +65,11 @@ main() {
     # Stop any instance from a previous install before setting up autostart
     "$INSTALL_DIR/$BINARY_NAME" stop >/dev/null 2>&1 || true
 
-    # Set up autostart
-    if [ "$OS" = "linux" ]; then
-        AUTOSTART_DIR="$HOME/.config/autostart"
-        mkdir -p "$AUTOSTART_DIR"
-        cat > "$AUTOSTART_DIR/power-monitor.desktop" << 'DESKTOP'
-[Desktop Entry]
-Type=Application
-Exec=/usr/local/bin/power-monitor start
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=5
-Name=Power Monitor
-Comment=Shows power delivery sources in the top bar
-Icon=thunderbolt-symbolic
-DESKTOP
-    else
-        LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist"
-        mkdir -p "$HOME/Library/LaunchAgents"
-        cat > "$LAUNCH_AGENT" << PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key><string>com.dhilipbinny.power-monitor</string>
-	<key>ProgramArguments</key>
-	<array><string>$INSTALL_DIR/$BINARY_NAME</string><string>--run</string></array>
-	<key>RunAtLoad</key><true/>
-	<key>StandardOutPath</key><string>/tmp/power-monitor.log</string>
-	<key>StandardErrorPath</key><string>/tmp/power-monitor.log</string>
-</dict>
-</plist>
-PLIST
-        launchctl unload "$LAUNCH_AGENT" 2>/dev/null || true
-        if ! launchctl load "$LAUNCH_AGENT" 2>/dev/null; then
-            echo "Note: could not load the LaunchAgent now (no GUI session?);"
-            echo "it will start automatically at next login."
-        fi
+    # Set up autostart — the binary owns the platform-specific registration
+    # (XDG .desktop on Linux, launchd LaunchAgent on macOS), so upgrades can
+    # refresh it with 'power-monitor autostart on'
+    if ! "$INSTALL_DIR/$BINARY_NAME" autostart on; then
+        echo "Note: autostart setup failed; run 'power-monitor autostart on' later."
     fi
 
     echo ""
