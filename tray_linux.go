@@ -19,6 +19,36 @@ static void indicator_set_label(AppIndicator *ind, const char *label) {
 	app_indicator_set_label(ind, label, "");
 }
 
+// Emit standard PropertiesChanged signal so GNOME Shell's AppIndicator
+// extension picks up XAyatanaLabel. The extension's GDBusProxy doesn't
+// receive XAyatanaNewLabel (not in interface XML), but it always listens
+// for the standard PropertiesChanged signal.
+#include <gio/gio.h>
+static void emit_label_changed(const char *label) {
+	GError *err = NULL;
+	GDBusConnection *conn = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+	if (!conn) {
+		if (err) g_error_free(err);
+		return;
+	}
+	GVariantBuilder changed;
+	g_variant_builder_init(&changed, G_VARIANT_TYPE("a{sv}"));
+	g_variant_builder_add(&changed, "{sv}", "XAyatanaLabel",
+		g_variant_new_string(label));
+
+	GVariantBuilder invalidated;
+	g_variant_builder_init(&invalidated, G_VARIANT_TYPE("as"));
+
+	g_dbus_connection_emit_signal(conn, NULL,
+		"/org/ayatana/NotificationItem/power_monitor",
+		"org.freedesktop.DBus.Properties",
+		"PropertiesChanged",
+		g_variant_new("(sa{sv}as)",
+			"org.kde.StatusNotifierItem", &changed, &invalidated),
+		NULL);
+	g_object_unref(conn);
+}
+
 #cgo pkg-config: gtk+-3.0
 #include <gtk/gtk.h>
 
@@ -58,10 +88,6 @@ static guint add_timeout(guint interval) {
 	return g_timeout_add(interval, (GSourceFunc)goOnUpdate, NULL);
 }
 
-static guint add_one_shot(guint interval) {
-	extern gboolean goOnFirstUpdate();
-	return g_timeout_add(interval, (GSourceFunc)goOnFirstUpdate, NULL);
-}
 */
 import "C"
 import "unsafe"
@@ -189,12 +215,13 @@ func (t *LinuxTray) update() {
 
 	withCStr(state.BarLabel, func(cs *C.char) {
 		C.indicator_set_label(t.indicator, cs)
+		C.emit_label_changed(cs)
 	})
 }
 
 func (t *LinuxTray) Run() {
-	C.add_one_shot(500)
 	C.add_timeout(refreshInterval)
+	t.update()
 	C.gtk_main()
 }
 
@@ -207,14 +234,6 @@ func goOnQuit() {
 	if trayInstance != nil {
 		trayInstance.Quit()
 	}
-}
-
-//export goOnFirstUpdate
-func goOnFirstUpdate() C.gboolean {
-	if trayInstance != nil {
-		trayInstance.update()
-	}
-	return C.FALSE
 }
 
 //export goOnUpdate
