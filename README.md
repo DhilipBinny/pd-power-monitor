@@ -48,29 +48,24 @@ curl -sL https://raw.githubusercontent.com/DhilipBinny/pd-power-monitor/main/ins
 ```
 
 Works on Linux and macOS. This automatically:
-- Installs runtime dependencies (Linux only — GTK3, libayatana-appindicator3; macOS needs none)
 - Downloads the latest release binary for your OS and architecture
-- Installs to `/usr/local/bin/`
+- Installs to `/usr/local/bin/` — no runtime dependencies on either platform
 - Sets up autostart on login (XDG autostart on Linux, launchd LaunchAgent on macOS)
 
 ### Build from source
 
+The Linux build is pure Go (the tray speaks the StatusNotifierItem and
+dbusmenu D-Bus protocols directly) — only the Go toolchain is needed, and
+Linux binaries can even be cross-compiled from any OS:
+
 ```bash
-# Install build dependencies
-# Ubuntu/Debian
-sudo apt install -y golang libayatana-appindicator3-dev libgtk-3-dev pkg-config
-
-# Fedora
-sudo dnf install -y golang libayatana-appindicator-gtk3-devel gtk3-devel pkg-config
-
-# Arch
-sudo pacman -S go libayatana-appindicator gtk3 pkgconf
-
-# Build and install
 git clone https://github.com/DhilipBinny/pd-power-monitor.git
 cd pd-power-monitor
 go build -o power-monitor .
 sudo install -m 755 power-monitor /usr/local/bin/
+
+# or cross-compile a Linux binary from any machine:
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o power-monitor .
 ```
 
 ### macOS
@@ -191,7 +186,7 @@ power-monitor/
 ├── process.go           # PID management, start/stop/restart
 ├── process_unix.go      # Daemonize + logging (Linux & macOS)
 ├── power_linux.go       # Linux sysfs power backend
-├── tray_linux.go        # GTK/AppIndicator system tray
+├── tray_linux.go        # Pure-Go D-Bus tray (StatusNotifierItem + dbusmenu)
 ├── power_darwin.go      # macOS IOKit power backend
 └── tray_darwin.go/.m/.h # macOS NSStatusItem menu bar UI
 ```
@@ -206,7 +201,7 @@ All shared logic lives in `types.go`, `logic.go`, and `process.go`; each platfor
 | RAM usage | ~29 MB |
 | CPU (idle) | ~0% |
 | Update interval | 3 seconds |
-| Dependencies at runtime | GTK 3, libayatana-appindicator |
+| Dependencies at runtime | none |
 
 ## Uninstall
 

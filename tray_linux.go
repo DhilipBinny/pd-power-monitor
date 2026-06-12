@@ -2,282 +2,424 @@
 
 package main
 
-/*
-#cgo pkg-config: ayatana-appindicator3-0.1
-#include <libayatana-appindicator/app-indicator.h>
+// Pure-Go system tray: implements the StatusNotifierItem and dbusmenu
+// D-Bus protocols directly, with the Ayatana label extension GNOME's
+// AppIndicator extension renders next to the icon. No GTK, no cgo —
+// linux binaries cross-compile from any platform with CGO_ENABLED=0.
 
-static AppIndicator* create_indicator(const char *id, const char *icon) {
-	return app_indicator_new(id, icon, APP_INDICATOR_CATEGORY_HARDWARE);
+import (
+	"fmt"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/godbus/dbus/v5"
+	"github.com/godbus/dbus/v5/prop"
+)
+
+const (
+	sniPath      = dbus.ObjectPath("/StatusNotifierItem")
+	menuPath     = dbus.ObjectPath("/MenuBar")
+	sniInterface = "org.kde.StatusNotifierItem"
+	menuIface    = "com.canonical.dbusmenu"
+	watcherName  = "org.kde.StatusNotifierWatcher"
+	watcherPath  = dbus.ObjectPath("/StatusNotifierWatcher")
+)
+
+// Menu item ids (dbusmenu requires stable int32 ids; 0 is the root)
+const (
+	idTitle    = 1
+	idSep1     = 2
+	idSep2     = 3
+	idBattery  = 4
+	idTotal    = 5
+	idThresh   = 6
+	idSep3     = 7
+	idQuit     = 8
+	idPortBase = 100 // port rows: 100, 101, ...
+)
+
+type LinuxTray struct {
+	source PowerSource
+
+	mu       sync.Mutex
+	state    DisplayState
+	revision uint32
+
+	conn     *dbus.Conn
+	props    *prop.Properties
+	quitOnce sync.Once
+	quitCh   chan struct{}
 }
-static void indicator_set_active(AppIndicator *ind) {
-	app_indicator_set_status(ind, APP_INDICATOR_STATUS_ACTIVE);
-}
-static void indicator_set_menu(AppIndicator *ind, GtkWidget *menu) {
-	app_indicator_set_menu(ind, GTK_MENU(menu));
-}
-static void indicator_set_label(AppIndicator *ind, const char *label) {
-	app_indicator_set_label(ind, label, "");
-}
-
-// Emit standard PropertiesChanged signal so GNOME Shell's AppIndicator
-// extension picks up XAyatanaLabel. The extension's GDBusProxy doesn't
-// receive XAyatanaNewLabel (not in interface XML), but it always listens
-// for the standard PropertiesChanged signal.
-#include <gio/gio.h>
-// NOTE: the object path is the indicator id "power-monitor" with dashes
-// mapped to underscores by libayatana — renaming the id breaks this emit.
-static void emit_label_changed(const char *label) {
-	// g_bus_get_sync returns a singleton; cache our ref instead of
-	// ref/unref churn every tick
-	static GDBusConnection *conn = NULL;
-	if (!conn) {
-		GError *err = NULL;
-		conn = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
-		if (!conn) {
-			if (err) g_error_free(err);
-			return;
-		}
-	}
-	GVariantBuilder changed;
-	g_variant_builder_init(&changed, G_VARIANT_TYPE("a{sv}"));
-	g_variant_builder_add(&changed, "{sv}", "XAyatanaLabel",
-		g_variant_new_string(label));
-
-	GVariantBuilder invalidated;
-	g_variant_builder_init(&invalidated, G_VARIANT_TYPE("as"));
-
-	g_dbus_connection_emit_signal(conn, NULL,
-		"/org/ayatana/NotificationItem/power_monitor",
-		"org.freedesktop.DBus.Properties",
-		"PropertiesChanged",
-		g_variant_new("(sa{sv}as)",
-			"org.kde.StatusNotifierItem", &changed, &invalidated),
-		NULL);
-}
-
-#cgo pkg-config: gtk+-3.0
-#include <gtk/gtk.h>
-
-extern void goOnQuit();
-
-static GtkWidget* new_menu() { return gtk_menu_new(); }
-static GtkWidget* new_separator() { return gtk_separator_menu_item_new(); }
-
-static GtkWidget* new_label_item(const char *label) {
-	GtkWidget *item = gtk_menu_item_new_with_label(label);
-	gtk_widget_set_sensitive(item, FALSE);
-	return item;
-}
-
-static GtkWidget* new_quit_item() {
-	GtkWidget *item = gtk_menu_item_new_with_label("Quit");
-	g_signal_connect_swapped(item, "activate", G_CALLBACK(goOnQuit), NULL);
-	return item;
-}
-
-static void menu_append(GtkWidget *menu, GtkWidget *item) {
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-}
-
-static void menu_insert(GtkWidget *menu, GtkWidget *item, gint pos) {
-	gtk_menu_shell_insert(GTK_MENU_SHELL(menu), item, pos);
-}
-
-// Quit must be marshaled onto the GTK main loop: the signal handler runs on
-// a Go goroutine, and a direct gtk_main_quit before gtk_main() starts is
-// silently lost. An idle source queued early fires as soon as the loop runs.
-static gboolean quit_idle(gpointer data) { gtk_main_quit(); return FALSE; }
-static void schedule_quit(void) { g_idle_add(quit_idle, NULL); }
-
-static void menu_remove(GtkWidget *menu, GtkWidget *item) {
-	gtk_container_remove(GTK_CONTAINER(menu), item);
-}
-
-static void set_item_label(GtkWidget *item, const char *label) {
-	gtk_menu_item_set_label(GTK_MENU_ITEM(item), label);
-}
-
-static void show_all(GtkWidget *w) { gtk_widget_show_all(w); }
-
-static guint add_timeout(guint interval) {
-	extern gboolean goOnUpdate();
-	return g_timeout_add(interval, (GSourceFunc)goOnUpdate, NULL);
-}
-
-*/
-import "C"
 
 var trayInstance *LinuxTray
 
-type LinuxTray struct {
-	source     PowerSource
-	indicator  *C.AppIndicator
-	menu       *C.GtkWidget
-	portItems  []*C.GtkWidget
-	separator1 *C.GtkWidget
-	itemBat    *C.GtkWidget
-	itemTotal  *C.GtkWidget
-	itemThresh *C.GtkWidget
-
-	// last rendered state, to skip cgo/GTK work when nothing changed
-	lastState DisplayState
-	rendered  bool
-}
-
-// Port rows are inserted after "Power Monitor" + separator.
-const portInsertIndex = 2
-
 func NewTray() TrayUI {
-	t := &LinuxTray{}
+	t := &LinuxTray{quitCh: make(chan struct{})}
 	trayInstance = t
 	return t
-}
-
-func setItemLabel(item *C.GtkWidget, label string) {
-	withCStr(label, func(cs *C.char) {
-		C.set_item_label(item, cs)
-	})
 }
 
 func (t *LinuxTray) Init(source PowerSource) {
 	t.source = source
 
-	C.gtk_init(nil, nil)
+	conn, err := dbus.ConnectSessionBus()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot connect to session bus: %v\n", err)
+		os.Exit(1)
+	}
+	t.conn = conn
 
-	withCStr("power-monitor", func(id *C.char) {
-		withCStr("thunderbolt-symbolic", func(icon *C.char) {
-			t.indicator = C.create_indicator(id, icon)
-		})
-	})
-	C.indicator_set_active(t.indicator)
+	t.exportSNI()
+	t.exportMenu()
 
-	t.menu = C.new_menu()
-
-	withCStr("Power Monitor", func(cs *C.char) {
-		C.menu_append(t.menu, C.new_label_item(cs))
-	})
-	C.menu_append(t.menu, C.new_separator())
-
-	// Port rows are inserted at portInsertIndex by the first update()
-
-	t.separator1 = C.new_separator()
-	C.menu_append(t.menu, t.separator1)
-
-	withCStr("Battery: --", func(cs *C.char) {
-		t.itemBat = C.new_label_item(cs)
-		C.menu_append(t.menu, t.itemBat)
-	})
-
-	withCStr("Power input: --", func(cs *C.char) {
-		t.itemTotal = C.new_label_item(cs)
-		C.menu_append(t.menu, t.itemTotal)
-	})
-
-	withCStr("Charge range: --", func(cs *C.char) {
-		t.itemThresh = C.new_label_item(cs)
-		C.menu_append(t.menu, t.itemThresh)
-	})
-
-	C.menu_append(t.menu, C.new_separator())
-	C.menu_append(t.menu, C.new_quit_item())
-
-	C.show_all(t.menu)
-	C.indicator_set_menu(t.indicator, t.menu)
+	if err := t.register(); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot register with StatusNotifierWatcher: %v\n", err)
+		os.Exit(1)
+	}
+	go t.reRegisterOnWatcherRestart()
 }
 
-func (t *LinuxTray) rebuildPortItems(ports []USBCPort) {
-	// Remove old port items from menu
-	for _, item := range t.portItems {
-		C.menu_remove(t.menu, item)
-	}
-	t.portItems = nil
+// sniName is the well-known bus name libappindicator-style hosts expect.
+func sniName() string {
+	return fmt.Sprintf("org.kde.StatusNotifierItem-%d-1", os.Getpid())
+}
 
-	for i, p := range ports {
-		withCStr(p.Name, func(cs *C.char) {
-			item := C.new_label_item(cs)
-			// Insert into the port section; appending would land below Quit
-			C.menu_insert(t.menu, item, C.gint(portInsertIndex+i))
-			t.portItems = append(t.portItems, item)
-		})
+type sniPixmap struct {
+	W, H int32
+	Data []byte
+}
+
+type sniTooltip struct {
+	IconName    string
+	Pixmaps     []sniPixmap
+	Title       string
+	Description string
+}
+
+func (t *LinuxTray) exportSNI() {
+	// Methods (no-ops: ItemIsMenu means the menu is the only interaction)
+	_ = t.conn.Export(sniMethods{}, sniPath, sniInterface)
+
+	spec := map[string]map[string]*prop.Prop{
+		sniInterface: {
+			"Category":          constProp("Hardware"),
+			"Id":                constProp("power-monitor"),
+			"Title":             constProp("Power Monitor"),
+			"Status":            constProp("Active"),
+			"WindowId":          constProp(uint32(0)),
+			"IconName":          constProp("thunderbolt-symbolic"),
+			"IconThemePath":     constProp(""),
+			"IconPixmap":        constProp([]sniPixmap{}),
+			"OverlayIconName":   constProp(""),
+			"AttentionIconName": constProp(""),
+			"ToolTip":           constProp(sniTooltip{Title: "Power Monitor"}),
+			"ItemIsMenu":        constProp(true),
+			"Menu":              constProp(menuPath),
+			// GNOME's AppIndicator extension renders this next to the icon;
+			// it picks up changes via the standard PropertiesChanged signal
+			// (the prop package emits it for us).
+			"XAyatanaLabel":         {Value: "", Writable: false, Emit: prop.EmitTrue},
+			"XAyatanaLabelGuide":    {Value: "", Writable: false, Emit: prop.EmitTrue},
+			"XAyatanaOrderingIndex": constProp(uint32(0)),
+		},
+	}
+	props, err := prop.Export(t.conn, sniPath, spec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot export SNI properties: %v\n", err)
+		os.Exit(1)
+	}
+	t.props = props
+}
+
+func constProp(v interface{}) *prop.Prop {
+	return &prop.Prop{Value: v, Writable: false, Emit: prop.EmitFalse}
+}
+
+type sniMethods struct{}
+
+func (sniMethods) Activate(x, y int32) *dbus.Error          { return nil }
+func (sniMethods) SecondaryActivate(x, y int32) *dbus.Error { return nil }
+func (sniMethods) ContextMenu(x, y int32) *dbus.Error       { return nil }
+func (sniMethods) Scroll(delta int32, dir string) *dbus.Error {
+	return nil
+}
+
+func (t *LinuxTray) exportMenu() {
+	_ = t.conn.Export((*menuObject)(t), menuPath, menuIface)
+	spec := map[string]map[string]*prop.Prop{
+		menuIface: {
+			"Version":       constProp(uint32(3)),
+			"Status":        constProp("normal"),
+			"TextDirection": constProp("ltr"),
+			"IconThemePath": constProp([]string{}),
+		},
+	}
+	if _, err := prop.Export(t.conn, menuPath, spec); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot export menu properties: %v\n", err)
+		os.Exit(1)
 	}
 }
+
+func (t *LinuxTray) register() error {
+	if _, err := t.conn.RequestName(sniName(), dbus.NameFlagDoNotQueue); err != nil {
+		return err
+	}
+	watcher := t.conn.Object(watcherName, watcherPath)
+	return watcher.Call(watcherName+".RegisterStatusNotifierItem", 0, sniName()).Err
+}
+
+// reRegisterOnWatcherRestart keeps the icon alive across host restarts
+// (GNOME extension reloads, lock/unlock, panel crashes).
+func (t *LinuxTray) reRegisterOnWatcherRestart() {
+	err := t.conn.AddMatchSignal(
+		dbus.WithMatchInterface("org.freedesktop.DBus"),
+		dbus.WithMatchMember("NameOwnerChanged"),
+		dbus.WithMatchArg(0, watcherName),
+	)
+	if err != nil {
+		return
+	}
+	ch := make(chan *dbus.Signal, 8)
+	t.conn.Signal(ch)
+	for {
+		select {
+		case sig, ok := <-ch:
+			if !ok {
+				return
+			}
+			if len(sig.Body) == 3 {
+				if newOwner, _ := sig.Body[2].(string); newOwner != "" {
+					_ = t.register()
+				}
+			}
+		case <-t.quitCh:
+			return
+		}
+	}
+}
+
+// --- dbusmenu ---
+
+type menuNode struct {
+	ID       int32
+	Props    map[string]dbus.Variant
+	Children []dbus.Variant
+}
+
+func item(id int32, label string, enabled bool) menuNode {
+	return menuNode{
+		ID: id,
+		Props: map[string]dbus.Variant{
+			"label":   dbus.MakeVariant(label),
+			"enabled": dbus.MakeVariant(enabled),
+			"visible": dbus.MakeVariant(true),
+		},
+	}
+}
+
+func separator(id int32) menuNode {
+	return menuNode{
+		ID: id,
+		Props: map[string]dbus.Variant{
+			"type":    dbus.MakeVariant("separator"),
+			"visible": dbus.MakeVariant(true),
+		},
+	}
+}
+
+// layout builds the whole menu from the current display state.
+// Callers must hold t.mu.
+func (t *LinuxTray) layout() menuNode {
+	nodes := []menuNode{
+		item(idTitle, "Power Monitor", false),
+		separator(idSep1),
+	}
+	for i, l := range t.state.PortLabels {
+		nodes = append(nodes, item(int32(idPortBase+i), l, false))
+	}
+	nodes = append(nodes, separator(idSep2))
+
+	bat, total := t.state.BatLabel, t.state.TotalLabel
+	if bat == "" {
+		bat = "Battery: --"
+	}
+	if total == "" {
+		total = "Power input: --"
+	}
+	nodes = append(nodes, item(idBattery, bat, false))
+	nodes = append(nodes, item(idTotal, total, false))
+	if t.state.ThreshLabel != "" {
+		nodes = append(nodes, item(idThresh, t.state.ThreshLabel, false))
+	}
+	nodes = append(nodes,
+		separator(idSep3),
+		item(idQuit, "Quit", true),
+	)
+
+	children := make([]dbus.Variant, len(nodes))
+	for i, n := range nodes {
+		children[i] = dbus.MakeVariant(n)
+	}
+	return menuNode{
+		ID: 0,
+		Props: map[string]dbus.Variant{
+			"children-display": dbus.MakeVariant("submenu"),
+		},
+		Children: children,
+	}
+}
+
+// menuObject exposes the com.canonical.dbusmenu methods.
+type menuObject LinuxTray
+
+func (m *menuObject) tray() *LinuxTray { return (*LinuxTray)(m) }
+
+func (m *menuObject) GetLayout(parentID int32, depth int32, names []string) (uint32, menuNode, *dbus.Error) {
+	t := m.tray()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	root := t.layout()
+	if parentID == 0 {
+		return t.revision, root, nil
+	}
+	for _, c := range root.Children {
+		if n, ok := c.Value().(menuNode); ok && n.ID == parentID {
+			return t.revision, n, nil
+		}
+	}
+	return t.revision, menuNode{ID: parentID, Props: map[string]dbus.Variant{}}, nil
+}
+
+type menuItemProps struct {
+	ID    int32
+	Props map[string]dbus.Variant
+}
+
+func (m *menuObject) GetGroupProperties(ids []int32, names []string) ([]menuItemProps, *dbus.Error) {
+	t := m.tray()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	want := make(map[int32]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out []menuItemProps
+	for _, c := range t.layout().Children {
+		if n, ok := c.Value().(menuNode); ok && (len(ids) == 0 || want[n.ID]) {
+			out = append(out, menuItemProps{ID: n.ID, Props: n.Props})
+		}
+	}
+	return out, nil
+}
+
+func (m *menuObject) GetProperty(id int32, name string) (dbus.Variant, *dbus.Error) {
+	t := m.tray()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, c := range t.layout().Children {
+		if n, ok := c.Value().(menuNode); ok && n.ID == id {
+			if v, ok := n.Props[name]; ok {
+				return v, nil
+			}
+		}
+	}
+	return dbus.MakeVariant(""), nil
+}
+
+func (m *menuObject) Event(id int32, eventID string, data dbus.Variant, timestamp uint32) *dbus.Error {
+	if eventID == "clicked" && id == idQuit {
+		m.tray().Quit()
+	}
+	return nil
+}
+
+func (m *menuObject) EventGroup(events []struct {
+	ID        int32
+	EventID   string
+	Data      dbus.Variant
+	Timestamp uint32
+}) ([]int32, *dbus.Error) {
+	for _, e := range events {
+		_ = m.Event(e.ID, e.EventID, e.Data, e.Timestamp)
+	}
+	return nil, nil
+}
+
+func (m *menuObject) AboutToShow(id int32) (bool, *dbus.Error) {
+	return false, nil
+}
+
+func (m *menuObject) AboutToShowGroup(ids []int32) ([]int32, []int32, *dbus.Error) {
+	return nil, nil, nil
+}
+
+// --- update loop ---
 
 func (t *LinuxTray) update() {
-	// One snapshot per tick; rebuildPortItems reuses the same slice so the
-	// menu rows and the computed labels can't come from different reads
 	ports := t.source.USBCPorts()
 	bat := t.source.Battery()
 	ac := t.source.ACOnline()
-
-	if len(ports) != len(t.portItems) {
-		t.rebuildPortItems(ports)
-		C.show_all(t.menu)
-		// show_all re-shows the hidden thresh row; force a full re-render
-		t.rendered = false
-	}
-
 	state := ComputeDisplay(ports, bat, ac)
-	prev, force := t.lastState, !t.rendered
 
-	for i, label := range state.PortLabels {
-		if i >= len(t.portItems) {
-			break
+	t.mu.Lock()
+	changed := !sameState(t.state, state)
+	labelChanged := t.state.BarLabel != state.BarLabel
+	if changed {
+		t.state = state
+		t.revision++
+	}
+	rev := t.revision
+	t.mu.Unlock()
+
+	if !changed {
+		return
+	}
+
+	// The host re-fetches the layout on this signal
+	_ = t.conn.Emit(menuPath, menuIface+".LayoutUpdated", rev, int32(0))
+
+	if labelChanged {
+		// Padding keeps the text off the neighboring status icons
+		label := "  " + state.BarLabel + "  "
+		// SetMust (not Set: that's the bus-facing setter, which rejects
+		// non-writable properties) emits the standard PropertiesChanged
+		// signal GNOME's extension listens for (the GNOME 46 fix);
+		// XAyatanaNewLabel covers hosts using the Ayatana signal instead.
+		t.props.SetMust(sniInterface, "XAyatanaLabel", label)
+		_ = t.conn.Emit(sniPath, sniInterface+".XAyatanaNewLabel", label, "")
+	}
+}
+
+func sameState(a, b DisplayState) bool {
+	if a.BarLabel != b.BarLabel || a.BatLabel != b.BatLabel ||
+		a.TotalLabel != b.TotalLabel || a.ThreshLabel != b.ThreshLabel ||
+		len(a.PortLabels) != len(b.PortLabels) {
+		return false
+	}
+	for i := range a.PortLabels {
+		if a.PortLabels[i] != b.PortLabels[i] {
+			return false
 		}
-		if force || i >= len(prev.PortLabels) || prev.PortLabels[i] != label {
-			setItemLabel(t.portItems[i], label)
-		}
 	}
-
-	if force || prev.BatLabel != state.BatLabel {
-		setItemLabel(t.itemBat, state.BatLabel)
-	}
-	if force || prev.TotalLabel != state.TotalLabel {
-		setItemLabel(t.itemTotal, state.TotalLabel)
-	}
-	if force || prev.ThreshLabel != state.ThreshLabel {
-		// Hide the row entirely on machines without charge thresholds
-		if state.ThreshLabel != "" {
-			setItemLabel(t.itemThresh, state.ThreshLabel)
-			C.gtk_widget_show(t.itemThresh)
-		} else {
-			C.gtk_widget_hide(t.itemThresh)
-		}
-	}
-
-	if force || prev.BarLabel != state.BarLabel {
-		// GNOME's bar label needs space padding so the text doesn't touch
-		// the neighboring status icons
-		withCStr("  "+state.BarLabel+"  ", func(cs *C.char) {
-			C.indicator_set_label(t.indicator, cs)
-			C.emit_label_changed(cs)
-		})
-	}
-
-	t.lastState = state
-	t.rendered = true
+	return true
 }
 
 func (t *LinuxTray) Run() {
-	C.add_timeout(C.guint(refreshPeriod.Milliseconds()))
 	t.update()
-	C.gtk_main()
+	ticker := time.NewTicker(refreshPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			t.update()
+		case <-t.quitCh:
+			t.conn.Close()
+			return
+		}
+	}
 }
 
 func (t *LinuxTray) Quit() {
-	C.schedule_quit()
-}
-
-//export goOnQuit
-func goOnQuit() {
-	if trayInstance != nil {
-		trayInstance.Quit()
-	}
-}
-
-//export goOnUpdate
-func goOnUpdate() C.gboolean {
-	if trayInstance != nil {
-		trayInstance.update()
-	}
-	return C.TRUE
+	t.quitOnce.Do(func() { close(t.quitCh) })
 }

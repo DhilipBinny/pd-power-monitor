@@ -64,24 +64,38 @@ if [ "$BUILT" != "$VERSION" ]; then
     exit 1
 fi
 
+# The Linux tray is pure Go (D-Bus), so Linux binaries cross-compile from
+# anywhere. Only macOS requires a native (cgo/Cocoa) build.
+for TARGET in linux/amd64 linux/arm64; do
+    TOS=${TARGET%/*}
+    TARCH=${TARGET#*/}
+    TASSET="power-monitor-$TOS-$TARCH"
+    [ "$TASSET" = "$ASSET" ] && continue
+    echo "== cross-building $TASSET (pure Go)"
+    CGO_ENABLED=0 GOOS="$TOS" GOARCH="$TARCH" \
+        "$GO" build -ldflags "-s -w -X main.version=$VERSION" -o "$STAGE/$TASSET" .
+done
+
 cd "$STAGE"
 if gh release view "$VERSION" -R "$REPO" >/dev/null 2>&1; then
     echo "== release $VERSION exists; merging this binary into it"
     # Fetch the other platforms' binaries so SHA256SUMS covers everything
     mkdir existing
     (cd existing && gh release download "$VERSION" -R "$REPO" -p 'power-monitor-*' 2>/dev/null) || true
-    rm -f "existing/$ASSET"   # ours is fresher
+    for f in power-monitor-*; do
+        rm -f "existing/$f"   # what we just built is fresher
+    done
     mv existing/* . 2>/dev/null || true
     rmdir existing
 
     sha256 power-monitor-* > SHA256SUMS
-    gh release upload "$VERSION" "$ASSET" SHA256SUMS -R "$REPO" --clobber
+    gh release upload "$VERSION" power-monitor-* SHA256SUMS -R "$REPO" --clobber
 else
     echo "== creating release $VERSION"
     sha256 power-monitor-* > SHA256SUMS
     EXTRA=""
     [ -n "$PRERELEASE" ] && EXTRA="--prerelease"
-    gh release create "$VERSION" "$ASSET" SHA256SUMS -R "$REPO" \
+    gh release create "$VERSION" power-monitor-* SHA256SUMS -R "$REPO" \
         --title "$VERSION" --notes "$NOTES" $EXTRA
 fi
 

@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build darwin
 
 package main
 
@@ -9,7 +9,7 @@ import "C"
 import "unsafe"
 
 // withCStr runs fn with a C copy of s and frees it afterwards.
-// Shared by both platform trays.
+// Only the darwin tray needs cgo; the Linux tray is pure Go (D-Bus).
 func withCStr(s string, fn func(*C.char)) {
 	cs := C.CString(s)
 	fn(cs)

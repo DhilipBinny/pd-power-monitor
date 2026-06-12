@@ -21,21 +21,8 @@ main() {
         *) echo "Unsupported OS: $OS"; exit 1 ;;
     esac
 
-    # Install runtime dependencies (Linux only; macOS uses native frameworks)
-    if [ "$OS" = "linux" ]; then
-        echo "Installing dependencies..."
-        if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq libgtk-3-0 libayatana-appindicator3-1 >/dev/null
-        elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y -q gtk3 libayatana-appindicator-gtk3 >/dev/null
-        elif command -v pacman >/dev/null 2>&1; then
-            sudo pacman -S --noconfirm --needed gtk3 libayatana-appindicator >/dev/null
-        else
-            echo "Warning: could not detect package manager."
-            echo "Please install GTK3 and libayatana-appindicator3 manually."
-        fi
-    fi
+    # No runtime dependencies: the Linux tray speaks D-Bus directly (pure
+    # Go) and macOS uses native frameworks.
 
     # GitHub's stable alias resolves the latest release in one request
     DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$BINARY_NAME-$OS-$ARCH"
