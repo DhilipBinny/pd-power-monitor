@@ -95,8 +95,23 @@ power-monitor start       # Start the indicator (runs in background)
 power-monitor stop        # Stop the indicator
 power-monitor restart     # Restart the indicator
 power-monitor status      # Show power info (works without the tray running)
+power-monitor upgrade     # Self-update to the latest release (sudo if in /usr/local/bin)
+power-monitor version     # Show the installed version
 power-monitor help        # Show usage
 ```
+
+### Upgrading
+
+```bash
+sudo power-monitor upgrade          # install the latest release
+power-monitor upgrade --check      # see if an upgrade is available
+sudo power-monitor upgrade --to v1.2.0   # pin a specific version
+power-monitor restart              # restart the indicator on the new version
+```
+
+The downloaded binary is verified against the release's `SHA256SUMS` and
+swapped in with an atomic rename, so a running indicator keeps working until
+restarted.
 
 ### Example: check power without starting the tray
 

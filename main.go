@@ -40,6 +40,10 @@ func main() {
 		cmdRestart()
 	case "status":
 		cmdStatus()
+	case "upgrade":
+		cmdUpgrade(os.Args[2:])
+	case "version", "--version":
+		fmt.Println("power-monitor", version)
 	case "--run":
 		runIndicator()
 	case "-h", "--help", "help":

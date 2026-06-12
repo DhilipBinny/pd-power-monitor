@@ -182,6 +182,9 @@ Usage:
   power-monitor stop      Stop the indicator
   power-monitor restart   Restart the indicator
   power-monitor status    Show running status and current power info
+  power-monitor upgrade   Self-update to the latest GitHub release
+                          (--check to preview, --to vX.Y.Z to pin)
+  power-monitor version   Show the installed version
 
 The indicator auto-starts on login via %s
 `, autostart)
