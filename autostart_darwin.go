@@ -129,6 +129,15 @@ func autostartEnable() error {
 		return err
 	}
 
+	// An indicator running outside launchd would make the RunAtLoad spawn
+	// exit on the PID guard and mark the job failed; just register for
+	// next login instead.
+	if readPID() != 0 && !launchdLoaded() {
+		fmt.Printf("autostart enabled (%s)\n", plist)
+		fmt.Println("note: the current indicator runs outside launchd; it will be launchd-managed from next login")
+		return nil
+	}
+
 	// Reload so a stale registration doesn't shadow the new plist
 	_ = exec.Command("launchctl", "bootout", launchdDomain()+"/"+launchdLabel).Run()
 	if err := bootstrapWithRetry(plist); err != nil {
@@ -141,12 +150,17 @@ func autostartEnable() error {
 	return nil
 }
 
+// autostartDisable only affects login behavior — a running indicator keeps
+// running (matching the Linux semantics). The loaded launchd job, if any,
+// disappears at logout since its plist is gone.
 func autostartDisable() error {
-	_ = exec.Command("launchctl", "bootout", launchdDomain()+"/"+launchdLabel).Run()
 	plist := launchAgentPath()
 	if err := os.Remove(plist); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	fmt.Println("autostart disabled")
+	if readPID() != 0 {
+		fmt.Println("(the running indicator was left running; 'power-monitor stop' stops it)")
+	}
 	return nil
 }
