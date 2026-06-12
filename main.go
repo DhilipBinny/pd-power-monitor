@@ -6,6 +6,13 @@ import (
 )
 
 func runIndicator() {
+	// Guard against a second instance (e.g. launchd RunAtLoad alongside a
+	// manually started one); cmdStart checks too, but --run can be invoked
+	// directly.
+	if pid := readPID(); pid != 0 && pid != os.Getpid() {
+		fmt.Printf("power-monitor is already running (pid %d)\n", pid)
+		os.Exit(1)
+	}
 	writePID()
 	defer removePID()
 

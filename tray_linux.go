@@ -213,7 +213,9 @@ func (t *LinuxTray) update() {
 		setItemLabel(t.itemThresh, state.ThreshLabel)
 	}
 
-	withCStr(state.BarLabel, func(cs *C.char) {
+	// GNOME's bar label needs space padding so the text doesn't touch
+	// the neighboring status icons
+	withCStr("  "+state.BarLabel+"  ", func(cs *C.char) {
 		C.indicator_set_label(t.indicator, cs)
 		C.emit_label_changed(cs)
 	})

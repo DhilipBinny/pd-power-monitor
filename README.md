@@ -1,6 +1,6 @@
 # power-monitor
 
-A lightweight system tray indicator for Linux that shows real-time USB-C Power Delivery wattage, AC adapter status, and battery information.
+A lightweight system tray indicator for Linux and macOS that shows real-time USB-C Power Delivery wattage, AC adapter status, and battery information.
 
 Built for laptops powered via USB-C (monitors, docks, chargers) where you want to know exactly how much power each source is delivering — especially useful when running off a USB-C monitor and want to confirm it supplies enough wattage.
 
@@ -47,11 +47,11 @@ Quit
 curl -sL https://raw.githubusercontent.com/DhilipBinny/pd-power-monitor/main/install.sh | sh
 ```
 
-This automatically:
-- Installs runtime dependencies (GTK3, libayatana-appindicator3)
-- Downloads the latest release binary for your architecture
+Works on Linux and macOS. This automatically:
+- Installs runtime dependencies (Linux only — GTK3, libayatana-appindicator3; macOS needs none)
+- Downloads the latest release binary for your OS and architecture
 - Installs to `/usr/local/bin/`
-- Sets up autostart on login
+- Sets up autostart on login (XDG autostart on Linux, launchd LaunchAgent on macOS)
 
 ### Build from source
 
@@ -72,6 +72,21 @@ cd pd-power-monitor
 go build -o power-monitor .
 sudo install -m 755 power-monitor /usr/local/bin/
 ```
+
+### macOS
+
+No external dependencies — the tray uses native Cocoa and the power data comes from IOKit (Xcode Command Line Tools required to build):
+
+```bash
+git clone https://github.com/DhilipBinny/pd-power-monitor.git
+cd pd-power-monitor
+go build -o power-monitor .
+sudo install -m 755 power-monitor /usr/local/bin/
+```
+
+For autostart on login, `install.sh` sets up a launchd LaunchAgent at
+`~/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist` that runs
+`power-monitor --run` with `RunAtLoad`.
 
 ## Usage
 
@@ -97,6 +112,8 @@ power-monitor is not running
 
 ## How it works
 
+### Linux
+
 power-monitor reads the Linux kernel's power supply subsystem via sysfs:
 
 | Data | Source |
@@ -110,10 +127,27 @@ It detects USB-C power supplies from any driver (UCSI, TCPM, FUSB302, Cros EC) b
 
 Battery power is read from `power_now` when available, with a fallback to `voltage_now * current_now` for systems that don't expose it.
 
+### macOS
+
+power-monitor reads the `AppleSmartBattery` service in the IORegistry via IOKit:
+
+| Data | Source |
+|---|---|
+| USB-C PD negotiation | `AdapterDetails` (`Watts`, `AdapterVoltage`, `Current`) |
+| Adapter max capability | `UsbHvcMenu` (advertised PD source profiles) |
+| Battery status | `IsCharging`, `ExternalConnected`, `FullyCharged` |
+| Battery power draw | `Amperage` × `Voltage` |
+
+macOS notes:
+- macOS reports the single active power adapter, so one USB-C source is shown even if multiple are plugged in (the Mac negotiates with one at a time).
+- Charge thresholds are managed by macOS (Optimized Battery Charging) and not exposed, so the charge range row is hidden.
+- The tray is a native `NSStatusItem` — no third-party dependencies.
+
 ## Compatibility
 
 **Tested on:**
-- Dell Pro 14 (PC14250) — Intel Meteor Lake, USB-C PD via UCSI
+- Dell Pro 14 — Intel Meteor Lake, USB-C PD via UCSI (Linux)
+- MacBook Pro — Apple M2 (macOS, Apple Silicon)
 
 **Should work on any Linux laptop with:**
 - Kernel 5.10+ (power supply sysfs interface)
@@ -136,12 +170,14 @@ power-monitor/
 ├── types.go             # Interfaces (PowerSource, TrayUI)
 ├── logic.go             # Display formatting (pure Go, cross-platform)
 ├── process.go           # PID management, start/stop/restart
-├── process_linux.go     # Linux daemonize + logging
+├── process_unix.go      # Daemonize + logging (Linux & macOS)
 ├── power_linux.go       # Linux sysfs power backend
-└── tray_linux.go        # GTK/AppIndicator system tray
+├── tray_linux.go        # GTK/AppIndicator system tray
+├── power_darwin.go      # macOS IOKit power backend
+└── tray_darwin.go/.m/.h # macOS NSStatusItem menu bar UI
 ```
 
-The codebase is structured for cross-platform expansion. To add macOS support, implement `power_darwin.go` (IOKit/SMC backend) and `tray_darwin.go` (NSStatusItem UI) — all shared logic in `types.go`, `logic.go`, and `process.go` stays untouched.
+All shared logic lives in `types.go`, `logic.go`, and `process.go`; each platform implements the `PowerSource` and `TrayUI` interfaces.
 
 ## Resource usage
 
@@ -155,10 +191,21 @@ The codebase is structured for cross-platform expansion. To add macOS support, i
 
 ## Uninstall
 
+Linux:
+
 ```bash
 power-monitor stop
 sudo rm /usr/local/bin/power-monitor
 rm ~/.config/autostart/power-monitor.desktop
+```
+
+macOS:
+
+```bash
+power-monitor stop
+launchctl unload ~/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist
+rm ~/Library/LaunchAgents/com.dhilipbinny.power-monitor.plist
+sudo rm /usr/local/bin/power-monitor
 ```
 
 ## Contributing
@@ -166,9 +213,9 @@ rm ~/.config/autostart/power-monitor.desktop
 Contributions are welcome. Please open an issue first to discuss what you would like to change.
 
 Areas where help is needed:
-- macOS support (`power_darwin.go` + `tray_darwin.go`)
-- Testing on more laptop models (especially HP, ASUS, Chromebooks)
+- Testing on more laptop models (especially HP, ASUS, Chromebooks, Intel Macs)
 - Wayland-native tray support (for compositors without SNI/AppIndicator)
+- Windows support (`power_windows.go` + `tray_windows.go`)
 
 ## License
 

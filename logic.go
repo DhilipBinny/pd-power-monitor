@@ -60,16 +60,15 @@ func ComputeDisplay(ports []USBCPort, bat BatteryInfo, ac bool) DisplayState {
 		threshLabel = fmt.Sprintf("Charge range: %s%% - %s%%", bat.ChargeStart, bat.ChargeEnd)
 	}
 
-	barLabel := "  No power"
+	barLabel := "No power"
 	if len(labelParts) > 0 {
-		barLabel = "  "
+		barLabel = ""
 		for i, p := range labelParts {
 			if i > 0 {
 				barLabel += "  |  "
 			}
 			barLabel += p
 		}
-		barLabel += "  "
 	}
 
 	return DisplayState{

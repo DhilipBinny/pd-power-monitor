@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -170,7 +171,11 @@ func cmdStatus() {
 }
 
 func printHelp() {
-	fmt.Println(`power-monitor - USB-C & battery power indicator for the system tray
+	autostart := "~/.config/autostart/"
+	if runtime.GOOS == "darwin" {
+		autostart = "a launchd LaunchAgent in ~/Library/LaunchAgents/"
+	}
+	fmt.Printf(`power-monitor - USB-C & battery power indicator for the system tray
 
 Usage:
   power-monitor start     Start the indicator (background)
@@ -178,5 +183,6 @@ Usage:
   power-monitor restart   Restart the indicator
   power-monitor status    Show running status and current power info
 
-The indicator auto-starts on login via ~/.config/autostart/`)
+The indicator auto-starts on login via %s
+`, autostart)
 }
