@@ -65,6 +65,7 @@ func (l *LinuxPowerSource) USBCPorts() []USBCPort {
 
 		ports = append(ports, USBCPort{
 			Name:         "USB-C " + strconv.Itoa(i+1),
+			ShortName:    "C" + strconv.Itoa(i+1),
 			Online:       online == "1",
 			Voltage:      vNowF,
 			CurrentMax:   iMaxF,
@@ -155,7 +156,7 @@ func (l *LinuxPowerSource) Battery() BatteryInfo {
 		totalCap += b.Capacity
 		totalCount++
 		// Use most active status (Discharging > Charging > Not charging)
-		if status == "" || b.Status == "Discharging" || (b.Status == "Charging" && status != "Discharging") {
+		if status == "" || b.Status == statusDischarging || (b.Status == statusCharging && status != statusDischarging) {
 			status = b.Status
 		}
 		if cs == "" {

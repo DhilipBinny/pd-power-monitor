@@ -16,7 +16,7 @@ func ComputeDisplay(ports []USBCPort, bat BatteryInfo, ac bool) DisplayState {
 	var totalInput float64
 	var portLabels []string
 
-	for i, port := range ports {
+	for _, port := range ports {
 		if port.Online {
 			totalInput += port.PDNegotiated
 			portLabels = append(portLabels, fmt.Sprintf(
@@ -24,7 +24,7 @@ func ComputeDisplay(ports []USBCPort, bat BatteryInfo, ac bool) DisplayState {
 				port.Name, port.PDNegotiated,
 				port.Voltage, port.CurrentMax, port.PDMax,
 			))
-			labelParts = append(labelParts, fmt.Sprintf("C%d:%.0fW", i+1, port.PDNegotiated))
+			labelParts = append(labelParts, fmt.Sprintf("%s:%.0fW", port.ShortName, port.PDNegotiated))
 		} else {
 			portLabels = append(portLabels, fmt.Sprintf("%s: disconnected", port.Name))
 		}
@@ -38,9 +38,9 @@ func ComputeDisplay(ports []USBCPort, bat BatteryInfo, ac bool) DisplayState {
 	if !bat.Found {
 		batLabel = "Battery: not present"
 	} else {
-		if bat.Status == "Discharging" {
+		if bat.Status == statusDischarging {
 			labelParts = append(labelParts, fmt.Sprintf("BAT:%.1fW", bat.PowerW))
-		} else if bat.Status == "Charging" {
+		} else if bat.Status == statusCharging {
 			labelParts = append(labelParts, fmt.Sprintf("CHG:%.1fW", bat.PowerW))
 		}
 		batLabel = fmt.Sprintf("Battery: %d%% | %s | %.1fW", bat.Capacity, bat.Status, bat.PowerW)

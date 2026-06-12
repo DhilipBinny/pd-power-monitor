@@ -159,7 +159,7 @@ func (t *LinuxTray) Init(source PowerSource) {
 		C.menu_append(t.menu, t.itemTotal)
 	})
 
-	withCStr("Charge limit: --", func(cs *C.char) {
+	withCStr("Charge range: --", func(cs *C.char) {
 		t.itemThresh = C.new_label_item(cs)
 		C.menu_append(t.menu, t.itemThresh)
 	})
@@ -209,8 +209,13 @@ func (t *LinuxTray) update() {
 
 	setItemLabel(t.itemBat, state.BatLabel)
 	setItemLabel(t.itemTotal, state.TotalLabel)
+	// Hide the row entirely on machines without charge thresholds;
+	// re-assert after rebuildPortItems' show_all re-shows everything
 	if state.ThreshLabel != "" {
 		setItemLabel(t.itemThresh, state.ThreshLabel)
+		C.gtk_widget_show(t.itemThresh)
+	} else {
+		C.gtk_widget_hide(t.itemThresh)
 	}
 
 	// GNOME's bar label needs space padding so the text doesn't touch

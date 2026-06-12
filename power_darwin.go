@@ -21,6 +21,7 @@ typedef struct {
 	long long adapter_voltage_mv;
 	long long adapter_current_ma;
 	long long adapter_max_watts; // best PD profile from UsbHvcMenu
+	char adapter_name[64];       // self-reported, e.g. "67W USB-C Power Adapter"
 } power_info;
 
 static long long dict_ll(CFDictionaryRef d, CFStringRef key, long long def) {
@@ -72,6 +73,10 @@ static int read_power(power_info *out) {
 		out->adapter_watts = dict_ll(adapter, CFSTR("Watts"), 0);
 		out->adapter_voltage_mv = dict_ll(adapter, CFSTR("AdapterVoltage"), 0);
 		out->adapter_current_ma = dict_ll(adapter, CFSTR("Current"), 0);
+		CFTypeRef nm = CFDictionaryGetValue(adapter, CFSTR("Name"));
+		if (nm && CFGetTypeID(nm) == CFStringGetTypeID())
+			CFStringGetCString((CFStringRef)nm, out->adapter_name,
+				sizeof(out->adapter_name), kCFStringEncodingUTF8);
 		// Some adapters report voltage/current but no Watts key
 		if (out->adapter_watts > 0 ||
 		    (out->adapter_voltage_mv > 0 && out->adapter_current_ma > 0))
@@ -104,6 +109,7 @@ static int read_power(power_info *out) {
 import "C"
 import (
 	"math"
+	"strings"
 	"time"
 )
 
@@ -146,8 +152,16 @@ func (d *DarwinPowerSource) USBCPorts() []USBCPort {
 		pdMax = negotiated
 	}
 
+	// macOS reports the single active adapter; label MagSafe charging
+	// honestly instead of calling everything USB-C.
+	name, short := "USB-C 1", "C1"
+	if strings.Contains(C.GoString(&info.adapter_name[0]), "MagSafe") {
+		name, short = "MagSafe", "MS"
+	}
+
 	return []USBCPort{{
-		Name:         "USB-C 1",
+		Name:         name,
+		ShortName:    short,
 		Online:       true,
 		Voltage:      voltage,
 		CurrentMax:   current,
@@ -162,18 +176,18 @@ func (d *DarwinPowerSource) Battery() BatteryInfo {
 		return BatteryInfo{Found: false, Status: "Unknown"}
 	}
 
-	status := "Discharging"
+	status := statusDischarging
 	if info.external_connected != 0 {
 		switch {
 		case info.amperage_ma < 0:
 			// Underpowered adapter: battery supplies the deficit
-			status = "Discharging"
+			status = statusDischarging
 		case info.is_charging != 0:
-			status = "Charging"
+			status = statusCharging
 		case info.fully_charged != 0:
-			status = "Full"
+			status = statusFull
 		default:
-			status = "Not charging"
+			status = statusNotCharging
 		}
 	}
 
