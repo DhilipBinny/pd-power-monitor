@@ -158,7 +158,7 @@ func (t *LinuxTray) Init(source PowerSource) {
 	})
 	C.menu_append(t.menu, C.new_separator())
 
-	t.rebuildPortItems()
+	// Port rows are inserted at portInsertIndex by the first update()
 
 	t.separator1 = C.new_separator()
 	C.menu_append(t.menu, t.separator1)
