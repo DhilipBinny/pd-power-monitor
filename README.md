@@ -197,8 +197,8 @@ All shared logic lives in `types.go`, `logic.go`, and `process.go`; each platfor
 
 | Metric | Value |
 |---|---|
-| Binary size | 2.9 MB |
-| RAM usage | ~29 MB |
+| Binary size | 6–8 MB |
+| RAM usage | ~9 MB (Linux, pure Go) |
 | CPU (idle) | ~0% |
 | Update interval | 3 seconds |
 | Dependencies at runtime | none |
